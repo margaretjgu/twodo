@@ -1,6 +1,5 @@
 pub mod persistence;
-// D1 repository temporarily removed for compilation issues
-// pub mod d1_repository;
+pub mod direct_d1_service;
 
 pub use persistence::{
     InMemoryExpenseRepository,
@@ -9,10 +8,4 @@ pub use persistence::{
     InMemoryPaymentRepository,
 };
 
-// D1 exports temporarily disabled
-// pub use d1_repository::{
-//     D1ExpenseRepository,
-//     D1ExpenseShareRepository,
-//     D1BalanceRepository,
-//     D1PaymentRepository,
-// };
+pub use direct_d1_service::DirectD1ExpenseService;

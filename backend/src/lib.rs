@@ -209,7 +209,7 @@ async fn handle_get_balances(req: Request, ctx: RouteContext<()>) -> Result<Resp
                     }
                 };
                 
-                let expense_service = match create_expense_service_with_env(&ctx.env) {
+                let expense_service = match create_d1_expense_service_with_env(&ctx.env) {
                     Ok(service) => service,
                     Err(e) => {
                         let response = Response::from_json(&serde_json::json!({
@@ -273,7 +273,7 @@ async fn handle_create_expense(mut req: Request, ctx: RouteContext<()>) -> Resul
         }),
     };
     
-    let expense_service = match create_expense_service_with_env(&ctx.env) {
+    let expense_service = match create_d1_expense_service_with_env(&ctx.env) {
         Ok(service) => service,
         Err(e) => {
             let response = Response::from_json(&ErrorResponse {
@@ -283,7 +283,7 @@ async fn handle_create_expense(mut req: Request, ctx: RouteContext<()>) -> Resul
         }
     };
     
-    match expense_service.create_expense(payload.expense, created_by).await {
+    match expense_service.create_expense_from_creation(payload.expense, created_by).await {
         Ok(expense_info) => Response::from_json(&expense_info),
         Err(e) => {
             let response = Response::from_json(&ErrorResponse {
@@ -308,7 +308,7 @@ async fn handle_get_expense(req: Request, ctx: RouteContext<()>) -> Result<Respo
                     }
                 };
                 
-                let expense_service = match create_expense_service_with_env(&ctx.env) {
+                let expense_service = match create_d1_expense_service_with_env(&ctx.env) {
                     Ok(service) => service,
                     Err(e) => {
                         let response = Response::from_json(&serde_json::json!({
@@ -403,7 +403,7 @@ async fn handle_delete_expense(req: Request, ctx: RouteContext<()>) -> Result<Re
                     }
                 };
                 
-                let expense_service = match create_expense_service_with_env(&ctx.env) {
+                let expense_service = match create_d1_expense_service_with_env(&ctx.env) {
                     Ok(service) => service,
                     Err(e) => {
                         let response = Response::from_json(&serde_json::json!({
@@ -413,7 +413,7 @@ async fn handle_delete_expense(req: Request, ctx: RouteContext<()>) -> Result<Re
                     }
                 };
                 
-                match expense_service.delete_expense(&expense_uuid, &user_id).await {
+                                 match expense_service.delete_expense(&expense_uuid).await {
                     Ok(_) => Response::from_json(&serde_json::json!({
                         "message": "Expense deleted successfully"
                     })),
@@ -451,7 +451,7 @@ async fn handle_get_group_expenses(req: Request, ctx: RouteContext<()>) -> Resul
                     }
                 };
                 
-                let expense_service = match create_expense_service_with_env(&ctx.env) {
+                let expense_service = match create_d1_expense_service_with_env(&ctx.env) {
                     Ok(service) => service,
                     Err(e) => {
                         let response = Response::from_json(&serde_json::json!({
@@ -461,7 +461,7 @@ async fn handle_get_group_expenses(req: Request, ctx: RouteContext<()>) -> Resul
                     }
                 };
                 
-                match expense_service.get_group_expenses(&group_uuid, &user_id, None, None).await {
+                                 match expense_service.get_group_expenses_with_pagination(&group_uuid, &user_id, None, None).await {
                     Ok(expenses) => Response::from_json(&expenses),
                     Err(e) => {
                         let response = Response::from_json(&serde_json::json!({
@@ -516,7 +516,7 @@ async fn handle_settle_debt(mut req: Request, ctx: RouteContext<()>) -> Result<R
         }),
     };
     
-    let expense_service = match create_expense_service_with_env(&ctx.env) {
+    let expense_service = match create_d1_expense_service_with_env(&ctx.env) {
         Ok(service) => service,
         Err(e) => {
             let response = Response::from_json(&ErrorResponse {
@@ -539,24 +539,16 @@ async fn handle_settle_debt(mut req: Request, ctx: RouteContext<()>) -> Result<R
     }
 }
 
-// Helper function to create expense service with in-memory storage (working implementation)
-fn create_expense_service_with_env(_env: &Env) -> Result<crate::expenses::application::use_cases::ExpenseService> {
-    use std::sync::Arc;
-    use crate::expenses::infrastructure::{
-        InMemoryExpenseRepository,
-        InMemoryExpenseShareRepository,
-        InMemoryBalanceRepository,
-        InMemoryPaymentRepository,
-    };
-    use crate::expenses::application::use_cases::ExpenseService;
+// Helper function to create D1 expense service (direct implementation!)
+// Following working example pattern - completely avoiding async trait issues
+fn create_d1_expense_service_with_env(env: &Env) -> Result<crate::expenses::infrastructure::DirectD1ExpenseService> {
+    use crate::expenses::infrastructure::DirectD1ExpenseService;
 
-    // Use in-memory repositories with real user integration (not hardcoded)
-    let expense_repo = Arc::new(InMemoryExpenseRepository::new());
-    let share_repo = Arc::new(InMemoryExpenseShareRepository::new());
-    let balance_repo = Arc::new(InMemoryBalanceRepository::new());
-    let payment_repo = Arc::new(InMemoryPaymentRepository::new());
+    // Get D1 database using the correct binding name "DB"
+    let d1 = env.d1("DB")?;
 
-    Ok(ExpenseService::new(expense_repo, share_repo, balance_repo, payment_repo))
+    // Use direct D1 service - no async traits, no Send issues!
+    Ok(DirectD1ExpenseService::new(d1))
 }
 
 // Helper function to extract user ID from auth token
