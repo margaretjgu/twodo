@@ -1,2 +1,3 @@
-// Infrastructure layer for groups - to be implemented
-// For now, using in-memory implementations via auth module pattern
+pub mod direct_d1_service;
+
+pub use direct_d1_service::DirectD1GroupService;

@@ -2,6 +2,7 @@
 use uuid::Uuid;
 use worker::*;
 use serde::{Deserialize, Serialize};
+use chrono::Datelike;
 
 // Domain modules with proper hexagonal architecture
 pub mod auth;
@@ -134,6 +135,28 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         .delete_async("/api/expenses/:id", handle_delete_expense)
         .get_async("/api/expenses/group/:group_id", handle_get_group_expenses)
         .post_async("/api/expenses/settle", handle_settle_debt)
+        // Groups APIs
+        .post_async("/api/groups", handle_create_group)
+        .get_async("/api/groups", handle_get_user_groups)
+        .get_async("/api/groups/:id", handle_get_group)
+        .delete_async("/api/groups/:id", handle_delete_group)
+        .get_async("/api/groups/:id/members", handle_get_group_members)
+        .post_async("/api/groups/:id/invite", handle_invite_user)
+        .post_async("/api/groups/:id/leave", handle_leave_group)
+        // Calendar/Events APIs
+        .post_async("/api/events", handle_create_event)
+        .get_async("/api/events/:id", handle_get_event)
+        .delete_async("/api/events/:id", handle_delete_event)
+        .get_async("/api/events/group/:group_id", handle_get_group_events)
+        .get_async("/api/events/group/:group_id/calendar", handle_get_events_by_date)
+        // Chores APIs
+        .post_async("/api/chores", handle_create_chore)
+        .get_async("/api/chores/:id", handle_get_chore)
+        .delete_async("/api/chores/:id", handle_delete_chore)
+        .put_async("/api/chores/:id/status", handle_update_chore_status)
+        .post_async("/api/chores/assign", handle_assign_chore)
+        .get_async("/api/chores/group/:group_id", handle_get_group_chores)
+        .get_async("/api/chores/user/:user_id", handle_get_user_chores)
         .run(req, env)
         .await
 }
@@ -539,6 +562,1142 @@ async fn handle_settle_debt(mut req: Request, ctx: RouteContext<()>) -> Result<R
     }
 }
 
+// Groups API handlers
+async fn handle_create_group(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    use crate::groups::domain::group::GroupCreation;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Deserialize)]
+    struct CreateGroupRequest {
+        name: String,
+        description: Option<String>,
+    }
+
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    let created_by = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Authentication required".to_string(),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    let payload: CreateGroupRequest = match req.json().await {
+        Ok(p) => p,
+        Err(_) => return Response::from_json(&ErrorResponse {
+            error: "Invalid JSON".to_string(),
+        }),
+    };
+
+    let group_service = match create_d1_group_service_with_env(&ctx.env) {
+        Ok(service) => service,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Service error: {}", e),
+            })?;
+            return Ok(response.with_status(500));
+        }
+    };
+
+    let creation = GroupCreation {
+        name: payload.name,
+        description: payload.description,
+        created_by,
+    };
+
+    match group_service.create_group_from_creation(creation, created_by).await {
+        Ok(group_info) => Response::from_json(&group_info),
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: e.to_string(),
+            })?;
+            Ok(response.with_status(400))
+        }
+    }
+}
+
+async fn handle_get_user_groups(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Authentication required".to_string(),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    let group_service = match create_d1_group_service_with_env(&ctx.env) {
+        Ok(service) => service,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Service error: {}", e),
+            })?;
+            return Ok(response.with_status(500));
+        }
+    };
+
+    match group_service.get_groups_for_user(&user_id).await {
+        Ok(groups) => Response::from_json(&groups),
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: e.to_string(),
+            })?;
+            Ok(response.with_status(500))
+        }
+    }
+}
+
+async fn handle_get_group(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Authentication required".to_string(),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    if let Some(group_id) = ctx.param("id") {
+        match Uuid::parse_str(group_id) {
+            Ok(group_uuid) => {
+                let group_service = match create_d1_group_service_with_env(&ctx.env) {
+                    Ok(service) => service,
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: format!("Service error: {}", e),
+                        })?;
+                        return Ok(response.with_status(500));
+                    }
+                };
+
+                match group_service.get_group_by_id(&group_uuid, &user_id).await {
+                    Ok(Some(group)) => Response::from_json(&group),
+                    Ok(None) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: "Group not found".to_string(),
+                        })?;
+                        Ok(response.with_status(404))
+                    }
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: e.to_string(),
+                        })?;
+                        Ok(response.with_status(500))
+                    }
+                }
+            }
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID".to_string(),
+                })?;
+                Ok(response.with_status(400))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_get_group_members(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    let _user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Authentication required".to_string(),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    if let Some(group_id) = ctx.param("id") {
+        match Uuid::parse_str(group_id) {
+            Ok(group_uuid) => {
+                let group_service = match create_d1_group_service_with_env(&ctx.env) {
+                    Ok(service) => service,
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: format!("Service error: {}", e),
+                        })?;
+                        return Ok(response.with_status(500));
+                    }
+                };
+
+                match group_service.get_group_members(&group_uuid).await {
+                    Ok(members) => Response::from_json(&members),
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: e.to_string(),
+                        })?;
+                        Ok(response.with_status(500))
+                    }
+                }
+            }
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID".to_string(),
+                })?;
+                Ok(response.with_status(400))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_invite_user(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    use crate::groups::domain::group::InviteUser;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Deserialize)]
+    struct InviteRequest {
+        user_id: Uuid,
+    }
+
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    let invited_by = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Authentication required".to_string(),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    let payload: InviteRequest = match req.json().await {
+        Ok(p) => p,
+        Err(_) => return Response::from_json(&ErrorResponse {
+            error: "Invalid JSON".to_string(),
+        }),
+    };
+
+    if let Some(group_id) = ctx.param("id") {
+        match Uuid::parse_str(group_id) {
+            Ok(group_uuid) => {
+                let group_service = match create_d1_group_service_with_env(&ctx.env) {
+                    Ok(service) => service,
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: format!("Service error: {}", e),
+                        })?;
+                        return Ok(response.with_status(500));
+                    }
+                };
+
+                let invite = InviteUser {
+                    user_id: payload.user_id,
+                };
+
+                match group_service.invite_user(&group_uuid, invite, invited_by).await {
+                    Ok(_) => Response::from_json(&serde_json::json!({
+                        "message": "User invited successfully"
+                    })),
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: e.to_string(),
+                        })?;
+                        Ok(response.with_status(400))
+                    }
+                }
+            }
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID".to_string(),
+                })?;
+                Ok(response.with_status(400))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_leave_group(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Authentication required".to_string(),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    if let Some(group_id) = ctx.param("id") {
+        match Uuid::parse_str(group_id) {
+            Ok(group_uuid) => {
+                let group_service = match create_d1_group_service_with_env(&ctx.env) {
+                    Ok(service) => service,
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: format!("Service error: {}", e),
+                        })?;
+                        return Ok(response.with_status(500));
+                    }
+                };
+
+                match group_service.leave_group(&group_uuid, &user_id).await {
+                    Ok(_) => Response::from_json(&serde_json::json!({
+                        "message": "Left group successfully"
+                    })),
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: e.to_string(),
+                        })?;
+                        Ok(response.with_status(400))
+                    }
+                }
+            }
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID".to_string(),
+                })?;
+                Ok(response.with_status(400))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_delete_group(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Authentication required".to_string(),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    if let Some(group_id) = ctx.param("id") {
+        match Uuid::parse_str(group_id) {
+            Ok(group_uuid) => {
+                let group_service = match create_d1_group_service_with_env(&ctx.env) {
+                    Ok(service) => service,
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: format!("Service error: {}", e),
+                        })?;
+                        return Ok(response.with_status(500));
+                    }
+                };
+
+                match group_service.delete_group(&group_uuid, &user_id).await {
+                    Ok(_) => Response::from_json(&serde_json::json!({
+                        "message": "Group deleted successfully"
+                    })),
+                    Err(e) => {
+                        let response = Response::from_json(&ErrorResponse {
+                            error: e.to_string(),
+                        })?;
+                        Ok(response.with_status(400))
+                    }
+                }
+            }
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID".to_string(),
+                })?;
+                Ok(response.with_status(400))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+// Calendar API Handlers
+async fn handle_create_event(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Parse event creation request
+    let creation: crate::calendar::domain::event::EventCreation = match req.json().await {
+        Ok(c) => c,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Invalid JSON payload".to_string(),
+            })?;
+            return Ok(response.with_status(400));
+        }
+    };
+
+    // Create calendar service
+    let calendar_service = match create_d1_calendar_service_with_env(&ctx.env) {
+        Ok(service) => service,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Service error: {}", e),
+            })?;
+            return Ok(response.with_status(500));
+        }
+    };
+
+    // Create event
+    match calendar_service.create_event_from_creation(creation, user_id).await {
+        Ok(event_info) => Response::from_json(&event_info),
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Failed to create event: {}", e),
+            })?;
+            Ok(response.with_status(500))
+        }
+    }
+}
+
+async fn handle_get_event(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get event ID from URL
+    if let Some(event_id_str) = ctx.param("id") {
+        let event_id = match Uuid::parse_str(event_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid event ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create calendar service
+        let calendar_service = match create_d1_calendar_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Get event
+        match calendar_service.get_event_by_id(&event_id, &user_id).await {
+            Ok(Some(event)) => Response::from_json(&event),
+            Ok(None) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Event not found".to_string(),
+                })?;
+                Ok(response.with_status(404))
+            }
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Database error: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Event ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_delete_event(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get event ID from URL
+    if let Some(event_id_str) = ctx.param("id") {
+        let event_id = match Uuid::parse_str(event_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid event ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create calendar service
+        let calendar_service = match create_d1_calendar_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Delete event
+        match calendar_service.delete_event(&event_id, &user_id).await {
+            Ok(()) => Response::from_json(&serde_json::json!({
+                "success": true,
+                "message": "Event deleted successfully"
+            })),
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Failed to delete event: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Event ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_get_group_events(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get group ID from URL
+    if let Some(group_id_str) = ctx.param("group_id") {
+        let group_id = match Uuid::parse_str(group_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create calendar service
+        let calendar_service = match create_d1_calendar_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Get group events
+        match calendar_service.get_group_events(&group_id, &user_id).await {
+            Ok(events) => Response::from_json(&events),
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Database error: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_get_events_by_date(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get group ID from URL
+    if let Some(group_id_str) = ctx.param("group_id") {
+        let group_id = match Uuid::parse_str(group_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Parse query parameters for date range (simplified - default to current month)
+        let now = chrono::Utc::now();
+        let start_date = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let end_date = start_date + chrono::Duration::days(31);
+
+        // Create calendar service
+        let calendar_service = match create_d1_calendar_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Get events in date range
+        match calendar_service.get_events_in_date_range(&group_id, &start_date, &end_date, &user_id).await {
+            Ok(events) => Response::from_json(&serde_json::json!({
+                "events": events,
+                "start_date": start_date,
+                "end_date": end_date,
+                "count": events.len()
+            })),
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Database error: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+// Chore API Handlers
+async fn handle_create_chore(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Parse chore creation request
+    let creation: crate::chores::domain::chore::ChoreCreation = match req.json().await {
+        Ok(c) => c,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Invalid JSON payload".to_string(),
+            })?;
+            return Ok(response.with_status(400));
+        }
+    };
+
+    // Create chore service
+    let chore_service = match create_d1_chore_service_with_env(&ctx.env) {
+        Ok(service) => service,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Service error: {}", e),
+            })?;
+            return Ok(response.with_status(500));
+        }
+    };
+
+    // Create chore
+    match chore_service.create_chore_from_creation(creation, user_id).await {
+        Ok(chore_info) => Response::from_json(&chore_info),
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Failed to create chore: {}", e),
+            })?;
+            Ok(response.with_status(500))
+        }
+    }
+}
+
+async fn handle_get_chore(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get chore ID from URL
+    if let Some(chore_id_str) = ctx.param("id") {
+        let chore_id = match Uuid::parse_str(chore_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid chore ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create chore service
+        let chore_service = match create_d1_chore_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Get chore
+        match chore_service.get_chore_by_id(&chore_id, &user_id).await {
+            Ok(Some(chore)) => Response::from_json(&chore),
+            Ok(None) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Chore not found".to_string(),
+                })?;
+                Ok(response.with_status(404))
+            }
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Database error: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Chore ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_delete_chore(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get chore ID from URL
+    if let Some(chore_id_str) = ctx.param("id") {
+        let chore_id = match Uuid::parse_str(chore_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid chore ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create chore service
+        let chore_service = match create_d1_chore_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Delete chore
+        match chore_service.delete_chore(&chore_id, &user_id).await {
+            Ok(()) => Response::from_json(&serde_json::json!({
+                "success": true,
+                "message": "Chore deleted successfully"
+            })),
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Failed to delete chore: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Chore ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_update_chore_status(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    #[derive(Deserialize)]
+    struct StatusUpdate {
+        status: crate::chores::domain::chore::ChoreStatus,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get chore ID from URL
+    if let Some(chore_id_str) = ctx.param("id") {
+        let chore_id = match Uuid::parse_str(chore_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid chore ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Parse status update request
+        let status_update: StatusUpdate = match req.json().await {
+            Ok(s) => s,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid JSON payload".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create chore service
+        let chore_service = match create_d1_chore_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Update chore status
+        match chore_service.update_chore_status(&chore_id, status_update.status, &user_id).await {
+            Ok(()) => Response::from_json(&serde_json::json!({
+                "success": true,
+                "message": "Chore status updated successfully"
+            })),
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Failed to update chore status: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Chore ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_assign_chore(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Parse assignment request
+    let assignment: crate::chores::domain::chore::ChoreAssignment = match req.json().await {
+        Ok(a) => a,
+        Err(_) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: "Invalid JSON payload".to_string(),
+            })?;
+            return Ok(response.with_status(400));
+        }
+    };
+
+    // Create chore service
+    let chore_service = match create_d1_chore_service_with_env(&ctx.env) {
+        Ok(service) => service,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Service error: {}", e),
+            })?;
+            return Ok(response.with_status(500));
+        }
+    };
+
+    // Assign chore
+    match chore_service.assign_chore(assignment, &user_id).await {
+        Ok(()) => Response::from_json(&serde_json::json!({
+            "success": true,
+            "message": "Chore assigned successfully"
+        })),
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Failed to assign chore: {}", e),
+            })?;
+            Ok(response.with_status(500))
+        }
+    }
+}
+
+async fn handle_get_group_chores(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get group ID from URL
+    if let Some(group_id_str) = ctx.param("group_id") {
+        let group_id = match Uuid::parse_str(group_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid group ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create chore service
+        let chore_service = match create_d1_chore_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Get group chores
+        match chore_service.get_group_chores(&group_id, &user_id).await {
+            Ok(chores) => Response::from_json(&chores),
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Database error: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "Group ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
+async fn handle_get_user_chores(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    #[derive(Serialize)]
+    struct ErrorResponse {
+        error: String,
+    }
+
+    // Get authenticated user
+    let _user_id = match get_authenticated_user_id(&req).await {
+        Ok(id) => id,
+        Err(e) => {
+            let response = Response::from_json(&ErrorResponse {
+                error: format!("Authentication error: {}", e),
+            })?;
+            return Ok(response.with_status(401));
+        }
+    };
+
+    // Get user ID from URL
+    if let Some(user_id_str) = ctx.param("user_id") {
+        let user_id = match Uuid::parse_str(user_id_str) {
+            Ok(id) => id,
+            Err(_) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: "Invalid user ID format".to_string(),
+                })?;
+                return Ok(response.with_status(400));
+            }
+        };
+
+        // Create chore service
+        let chore_service = match create_d1_chore_service_with_env(&ctx.env) {
+            Ok(service) => service,
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Service error: {}", e),
+                })?;
+                return Ok(response.with_status(500));
+            }
+        };
+
+        // Get user chores (optionally filtered by group)
+        // For now, get all user chores - could add group_id query parameter later
+        match chore_service.get_user_chores(&user_id, None).await {
+            Ok(chores) => Response::from_json(&chores),
+            Err(e) => {
+                let response = Response::from_json(&ErrorResponse {
+                    error: format!("Database error: {}", e),
+                })?;
+                Ok(response.with_status(500))
+            }
+        }
+    } else {
+        let response = Response::from_json(&ErrorResponse {
+            error: "User ID is required".to_string(),
+        })?;
+        Ok(response.with_status(400))
+    }
+}
+
 // Helper function to create D1 expense service (direct implementation!)
 // Following working example pattern - completely avoiding async trait issues
 fn create_d1_expense_service_with_env(env: &Env) -> Result<crate::expenses::infrastructure::DirectD1ExpenseService> {
@@ -549,6 +1708,39 @@ fn create_d1_expense_service_with_env(env: &Env) -> Result<crate::expenses::infr
 
     // Use direct D1 service - no async traits, no Send issues!
     Ok(DirectD1ExpenseService::new(d1))
+}
+
+// Helper function to create D1 groups service
+fn create_d1_group_service_with_env(env: &Env) -> Result<crate::groups::infrastructure::DirectD1GroupService> {
+    use crate::groups::infrastructure::DirectD1GroupService;
+
+    // Get D1 database using the correct binding name "DB"
+    let d1 = env.d1("DB")?;
+
+    // Use direct D1 service - no async traits, no Send issues!
+    Ok(DirectD1GroupService::new(d1))
+}
+
+// Helper function to create D1 calendar service
+fn create_d1_calendar_service_with_env(env: &Env) -> Result<crate::calendar::infrastructure::DirectD1CalendarService> {
+    use crate::calendar::infrastructure::DirectD1CalendarService;
+
+    // Get D1 database using the correct binding name "DB"
+    let d1 = env.d1("DB")?;
+
+    // Use direct D1 service - no async traits, no Send issues!
+    Ok(DirectD1CalendarService::new(d1))
+}
+
+// Helper function to create D1 chore service
+fn create_d1_chore_service_with_env(env: &Env) -> Result<crate::chores::infrastructure::DirectD1ChoreService> {
+    use crate::chores::infrastructure::DirectD1ChoreService;
+
+    // Get D1 database using the correct binding name "DB"
+    let d1 = env.d1("DB")?;
+
+    // Use direct D1 service - no async traits, no Send issues!
+    Ok(DirectD1ChoreService::new(d1))
 }
 
 // Helper function to extract user ID from auth token

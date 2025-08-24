@@ -162,3 +162,9 @@ pub struct ChoreStats {
 pub struct AddComment {
     pub content: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChoreAssignment {
+    pub chore_id: Uuid,
+    pub assigned_to: Uuid,
+}
