@@ -1,0 +1,103 @@
+# Rust Build Artifacts
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Cloudflare Workers & Wrangler
+.wrangler/
+wrangler.toml
+*.toml
+!wrangler.example.toml
+dist/
+worker/
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+.dev.vars
+
+# Database & Infrastructure IDs
+schema.sql.backup
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Node.js (if using npm tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs & Debugging
+*.log
+logs/
+.wrangler/logs/
+
+# Temporary Files
+*.tmp
+*.temp
+.cache/
+
+# Backup Files
+*.bak
+*.backup
+*.old
+
+# Build & Distribution
+/build/
+/dist/
+/public/build/
+
+# WASM Build Artifacts
+pkg/
+*.wasm
+
+# Cloudflare Specific
+.dev.vars
+.preview.vars
+.prod.vars
+
+# Secrets & Keys
+*.key
+*.pem
+*.p12
+*.crt
+secrets.txt
+credentials.json
+
+# Local Development
+.local/
+.dev/
+local_*
+
+# Documentation Build
+/book/
+/docs/_book/
+
+# Profiling & Benchmarks
+flamegraph.svg
+perf.data*
+
+# Test Coverage
+/coverage/
+*.lcov

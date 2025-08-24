@@ -1,0 +1,34 @@
+# TwoDo Cloudflare Workers Configuration Template
+# Copy this to wrangler.toml and fill in your actual values
+
+name = "twodo-api"
+main = "src/lib.rs"
+compatibility_date = "2024-01-15"
+
+# D1 Database (SQLite)
+[[d1_databases]]
+binding = "DB"
+database_name = "your-database-name"
+database_id = "your-database-id-from-wrangler-d1-list"
+
+# KV Storage for caching/sessions
+[[kv_namespaces]]
+binding = "KV"
+id = "your-kv-namespace-id-from-wrangler-kv-namespace-list"
+
+# R2 File Storage (optional - for file uploads)
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "your-bucket-name"
+
+# Environment variables (non-sensitive only)
+[vars]
+ENVIRONMENT = "production"
+APP_VERSION = "1.0.0"
+
+# Note: Sensitive variables should be set with:
+# wrangler secret put SECRET_NAME
+# Examples:
+# - JWT_SECRET
+# - FCM_SERVER_KEY
+# - DATABASE_ENCRYPTION_KEY

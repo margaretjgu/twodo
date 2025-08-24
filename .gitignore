@@ -1,0 +1,219 @@
+# TwoDo Project - Comprehensive .gitignore
+
+# ================================
+# BACKEND (Rust + Cloudflare)
+# ================================
+
+# Rust Build Artifacts
+backend/target/
+backend/**/*.rs.bk
+backend/Cargo.lock
+
+# Cloudflare Workers & Wrangler - SENSITIVE DATA
+backend/.wrangler/
+backend/wrangler.toml
+backend/dist/
+backend/worker/
+
+# Environment & Secrets - CRITICAL
+backend/.env
+backend/.env.local
+backend/.env.*.local
+backend/.dev.vars
+backend/.preview.vars
+backend/.prod.vars
+
+# Database & Infrastructure - SENSITIVE
+backend/schema.sql.backup
+backend/*.db
+backend/*.db-journal
+backend/*.sqlite
+backend/*.sqlite3
+backend/local.db*
+
+# WASM Build Artifacts
+backend/pkg/
+backend/*.wasm
+
+# ================================
+# FRONTEND (React Native)
+# ================================
+
+# React Native & Metro
+frontend/node_modules/
+frontend/.expo/
+frontend/.expo-shared/
+frontend/dist/
+frontend/web-build/
+
+# React Native Bundle
+frontend/index.android.bundle
+frontend/index.ios.bundle
+frontend/index.android.map
+frontend/index.ios.map
+
+# Native Build Artifacts
+frontend/ios/build/
+frontend/android/build/
+frontend/android/.gradle/
+frontend/android/app/build/
+
+# React Native Logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Package Managers
+frontend/package-lock.json
+frontend/yarn.lock
+
+# Environment Files - SENSITIVE
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# ================================
+# SENSITIVE CREDENTIALS & SECRETS
+# ================================
+
+# API Keys & Secrets
+**/*.key
+**/*.pem
+**/*.p12
+**/*.crt
+**/secrets.txt
+**/credentials.json
+**/*secret*
+**/*credential*
+
+# Firebase & Google Services
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase-config.js
+
+# Apple Developer
+**/ios/*.mobileprovision
+**/ios/fastlane/report.xml
+**/ios/fastlane/Preview.html
+**/ios/fastlane/screenshots
+**/ios/fastlane/test_output
+
+# Android Keystore
+**/android/app/*.keystore
+**/android/app/*.jks
+**/android/key.properties
+
+# ================================
+# DEVELOPMENT & BUILD TOOLS
+# ================================
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.vim/
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs & Debugging
+*.log
+logs/
+.wrangler/logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary Files
+*.tmp
+*.temp
+.cache/
+.parcel-cache/
+
+# Backup Files
+*.bak
+*.backup
+*.old
+
+# ================================
+# BUILD & DISTRIBUTION
+# ================================
+
+# Build Outputs
+/build/
+/dist/
+/public/build/
+coverage/
+*.lcov
+
+# Node.js
+node_modules/
+.npm
+.eslintcache
+
+# ================================
+# LOCAL DEVELOPMENT
+# ================================
+
+# Local Development
+.local/
+.dev/
+local_*
+
+# Test Files
+*.test.db
+test_*.sqlite
+
+# Documentation Build
+/book/
+/docs/_book/
+
+# Profiling & Benchmarks
+flamegraph.svg
+perf.data*
+
+# ================================
+# PLATFORM SPECIFIC
+# ================================
+
+# macOS
+*.dSYM.zip
+*.dSYM
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ================================
+# PROJECT SPECIFIC PATTERNS
+# ================================
+
+# TwoDo Specific
+**/twodo-cache*
+**/database-backup*
+**/production-data*
+
+# Development Databases
+**/dev.db
+**/test.db
+**/local*.db
+
+# API Documentation (if generated)
+api-docs/
+swagger-ui/
+
+# Monitoring & Analytics
+analytics/
+metrics/
