@@ -70,7 +70,13 @@ impl ExpenseService {
         self.expense_repository.create_expense(&expense).await?;
 
         // Calculate shares based on split type
-        let shares = self.calculate_shares(&creation)?;
+        let mut shares = self.calculate_shares(&creation)?;
+        
+        // Fix expense_id for all shares (critical bug fix)
+        for share in &mut shares {
+            share.expense_id = expense_id;
+        }
+        
         self.share_repository.create_shares(&shares).await?;
 
         // Return expense info
@@ -150,10 +156,7 @@ impl ExpenseService {
             },
         }
 
-        // Update expense_id correctly
-        for share in &mut shares {
-            share.expense_id = creation.group_id; // This should be expense_id, but we'll fix in implementation
-        }
+        // Note: expense_id will be set correctly by the caller
 
         Ok(shares)
     }
